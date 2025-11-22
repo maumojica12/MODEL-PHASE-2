@@ -1,278 +1,189 @@
+"""
+kmeans.py
+A small, dependency-light KMeans implementation that works with pandas.DataFrame.
+Features / fixes:
+- Robust euclidean distance handling for (Series, Series) and (DataFrame, Series).
+- k-means++ style centroid initialization (farthest-first variant from given algorithm).
+- Correct grouping, centroid update with safe handling of empty clusters (retain previous centroid).
+- Proper stopping criteria (stop when groups OR centroids don't change, or max iterations reached).
+- Clear type hints and docstrings.
+"""
+
+from typing import Optional
 import numpy as np
 import pandas as pd
 
-class KMeans(object):
 
-    def __init__(self, k, start_var, end_var, num_observations, data):
-        """Class constructor for KMeans
-        Arguments:
-            k {int} -- number of clusters to create from the data
-            start_var {int} -- starting index of the variables (columns) to
-            consider in creating clusters from the dataset. This is
-            useful for excluding some columns for clustering.
-            end_var {int} -- ending index of the variables (columns) to
-            consider in creating clusters from the dataset. This is
-            useful for excluding some columns for clustering.
-            num_observations {int} -- total number of observations (rows) in
-            the dataset.
-            data {DataFrame} -- the dataset to cluster
+class KMeans:
+    def __init__(self, k: int, start_var: int, end_var: int, num_observations: int, data: pd.DataFrame, random_state: Optional[int] = 1):
         """
-        np.random.seed(1)
-        self.k = k
-        self.start_var = start_var
-        self.end_var = end_var
-        self.num_observations = num_observations
-        self.columns = [i for i in data.columns[start_var:end_var]]
+        Args:
+            k: number of clusters
+            start_var: start column index (inclusive) for clustering features
+            end_var: end column index (exclusive) for clustering features
+            num_observations: expected number of rows in the data (used for initialization shapes)
+            data: original DataFrame (used for column names)
+            random_state: seed for reproducibility
+        """
+        if not (0 <= start_var < end_var <= data.shape[1]):
+            raise ValueError("Invalid start_var/end_var for data columns.")
+        self.k = int(k)
+        self.start_var = int(start_var)
+        self.end_var = int(end_var)
+        self.num_observations = int(num_observations)
+        self.columns = list(data.columns[self.start_var:self.end_var])
         self.centroids = pd.DataFrame(columns=self.columns)
+        self.rng = np.random.RandomState(random_state)
 
-
-    def initialize_centroids(self, data):
-        """Returns initial centroids. This function picks a random point from
-        the dataset as the first centroid, then iteratively picks points that
-        are farthest from the current set of centroids.
-        The algorithm for this initialization is as follows:
-        1. Randomly select the first centroid from the data points in the
-        dataset.
-        2. For each data point, compute its distance from each centroid in the
-        current set of centroids. For each distance computed from each
-        centroid, retain only the shortest distance for each data point. In
-        other words, we are computing the distance of each data point from
-        the nearest centroid.
-        3. Select the data point with the maximum distance from the nearest
-        centroid as the next centroid.
-        4. Repeat steps 2 and 3 until we have k number of centroids.
-
-        Arguments:
-            data {DataFrame} -- dataset to cluster
-        Returns:
-            DataFrame -- contains the values of the initial location of the
-            centroids.
-        """
-
-        # TODO: Complete this function.
-
-        # Step 1: Randomly select a data point from the dataset as the first
-        # centroid.
-        index = np.random.randint(low=0, high=self.num_observations)
-        point = data.iloc[index, self.start_var:self.end_var]
-        point = point.set_axis(self.centroids.columns).to_frame().T
-        self.centroids = pd.concat([self.centroids, point], ignore_index=True)
-        sliced_data = data.iloc[:, self.start_var:self.end_var]
-
-        # Step 2: Select the remaining centroids.
-        for i in range(1, self.k):
-
-            # The variable distance is a DataFrame that will store the
-            # distances of each data point from each centroid. Each column
-            # represents the distance of the data point from a specific
-            # centroid. Example, the value in row 3 column 0 of the DataFrame
-            # distances represents the distance of data point 3 from
-            # centroid 0.
-            distances = pd.DataFrame()
-
-            # TODO: Get the Euclidean distance of each data point in the
-            # dataset from each centroid in the current set of centroids.
-            # Then store it to a column in the DataFrame distances
-            # Hint: Use the get_euclidean_distance() function that we have
-            # defined in this class.
-            for j in range(len(self.centroids)):
-                distances[j] = self.get_euclidean_distance(sliced_data, self.centroids.iloc[j])
-
-
-            # Step 3: Select the data point with the maximum distance from the
-            # nearest centroid as the next centroid.
-
-            # TODO: Get the minimum distance of each data point from centroid.
-            # Then, get the index of the data point with the maximum distance
-            # from the nearest centroid and store it to variable index.
-            # Hint: Use pandas.DataFrame.min() and pandas.Series.idxmax()
-            # functions.
-            min_distances = distances.min(axis=1)          
-            index = min_distances.idxmax()
-            # Append the selected data point to the set of centroids.
-            point = data.iloc[index, self.start_var:self.end_var]
-            point = point.set_axis(self.centroids.columns).to_frame().T
-            self.centroids = pd.concat([self.centroids, point], ignore_index=True)
-
-        return self.centroids
+    # -----------------------
+    # Utility: Euclidean distance
+    # -----------------------
+    def _to_float_series(self, s: pd.Series) -> pd.Series:
+        return s.astype(float)
 
     def get_euclidean_distance(self, point1, point2):
-        """Returns the Euclidean distance between two data points. These
-        data points can be represented as 2 Series objects. This function can
-        also compute the Euclidean distance between a list of data points
-        (represented as a DataFrame) and a single data point (represented as
-        a Series), using broadcasting.
-
-        The Euclidean distance can be computed by getting the square root of
-        the sum of the squared difference between each variable of each data
-        point.
-
-        For the arguments point1 and point2, you can only pass these
-        combinations of data types:
-        - Series and Series -- returns np.float64
-        - DataFrame and Series -- returns pd.Series
-
-        For a DataFrame and a Series, if the shape of the DataFrame is
-        (3, 2), the shape of the Series should be (2,) to enable broadcasting.
-        This operation will result to a Series of shape (3,)
-
-        Arguments:
-            point1 {Series or DataFrame} - data point
-            point2 {Series or DataFrame} - data point
-        Returns:
-            np.float64 or pd.Series -- contains the Euclidean distance
-            between the data points.
         """
+        Compute Euclidean distance.
 
-        # TODO: Implement this function based on the documentation.
-        # Hint: Use the pandas.Series.sum() and the numpy.sqrt() functions.
-       
-        if isinstance(point1, pd.Series):
-            point1 = point1.astype(float)
-        if isinstance(point2, pd.Series):
-            point2 = point2.astype(float)
+        Allowed shapes:
+          - Series, Series -> scalar float
+          - DataFrame, Series -> Series of row-wise distances
 
-        # If point1 is a DataFrame and point2 is a Series → compute row-wise
-        if isinstance(point1, pd.DataFrame):
-            diff = point1.values - point2.values
-            return np.sqrt(np.sum(diff**2, axis=1))
-
-    # Case 1: Series vs Series
+        Behaviour:
+          - Aligns series indices / dataframe columns to guarantee correct subtraction order.
+        """
+        # Series & Series
         if isinstance(point1, pd.Series) and isinstance(point2, pd.Series):
-            diff = point1 - point2
-            return np.sqrt((diff ** 2).sum())
+            p1 = self._to_float_series(point1.reindex(point2.index))
+            p2 = self._to_float_series(point2)
+            diff = p1 - p2
+            return float(np.sqrt((diff ** 2).sum()))
 
-    # Case 2: DataFrame vs Series (broadcast row-wise)
+        # DataFrame & Series (row-wise broadcast)
         if isinstance(point1, pd.DataFrame) and isinstance(point2, pd.Series):
-            point2 = point2.reindex(point1.columns)   # align indexes
-            diff = point1 - point2
-            return np.sqrt((diff ** 2).sum(axis=1))
+            df = point1.astype(float, copy=True)
+            s = self._to_float_series(point2.reindex(df.columns))
+            diff = df - s
+            # sum across columns (axis=1)
+            return np.sqrt((diff ** 2).sum(axis=1)).reset_index(drop=True)
 
-        raise TypeError("get_euclidean_distance only supports (Series, Series) or (DataFrame, Series)")
+        raise TypeError("get_euclidean_distance only supports (Series, Series) or (DataFrame, Series).")
 
-    def group_observations(self, data):
-        """Returns the clusters of each data point in the dataset given
-        the current set of centroids. Suppose this function is given 100 data
-        points to cluster into 3 groups, the function returns a Series of
-        shape (100,), where each value is between 0 to 2.
-
-        Arguments:
-            data {DataFrame} -- dataset to cluster
-        Returns:
-            Series -- represents the cluster of each data point in the dataset.
+    # -----------------------
+    # Initialization
+    # -----------------------
+    def initialize_centroids(self, data: pd.DataFrame) -> pd.DataFrame:
         """
-        # TODO: Complete this function.
+        Initialize centroids with a farthest-first (kmeans++ like) approach:
+        1. choose one random point
+        2. for each remaining centroid, choose the point with maximum distance to nearest centroid
+        Returns DataFrame of shape (k, n_features)
+        """
+        features = data.iloc[:, self.start_var:self.end_var].reset_index(drop=True).astype(float)
+        n = features.shape[0]
+        if self.k > n:
+            raise ValueError("k cannot be greater than number of observations.")
 
-        # The variable distance is a DataFrame that will store the distances
-        # of each data point from each centroid. Each column represents the
-        # distance of the data point from a specific centroid. Example, the
-        # value in row 3 column 0 of the DataFrame distances represents the
-        # distance of data point 3 from centroid 0.
-        distances = pd.DataFrame()
-        sliced_data = data.iloc[:, self.start_var:self.end_var]
+        centroids = []
+        # pick first randomly
+        first_idx = self.rng.randint(0, n)
+        centroids.append(features.iloc[first_idx].copy())
+
+        # pick remaining
+        for _ in range(1, self.k):
+            # compute distance of each point to nearest centroid
+            dists = pd.DataFrame()
+            for c in centroids:
+                dists = pd.concat([dists, self.get_euclidean_distance(features, c)], axis=1) if not dists.empty else self.get_euclidean_distance(features, c)
+            # if dists is Series (only one centroid) ensure DataFrame
+            if isinstance(dists, pd.Series):
+                dists = dists.to_frame(0)
+            min_dists = dists.min(axis=1)
+            next_idx = int(min_dists.idxmax())
+            centroids.append(features.iloc[next_idx].copy())
+
+        cent_df = pd.DataFrame(centroids).reset_index(drop=True)
+        cent_df.columns = self.columns
+        self.centroids = cent_df
+        return self.centroids
+
+    # -----------------------
+    # Assign groups
+    # -----------------------
+    def group_observations(self, data: pd.DataFrame) -> pd.Series:
+        """
+        For each data row (using feature slice), compute nearest centroid index.
+        Returns: pd.Series of length = data.shape[0] with dtype int32.
+        """
+        features = data.iloc[:, self.start_var:self.end_var].reset_index(drop=True).astype(float)
+        if self.centroids.empty:
+            raise RuntimeError("Centroids are not initialized.")
+        distances = pd.DataFrame(index=features.index)
         for i in range(self.k):
-            distances[i] = self.get_euclidean_distance(sliced_data, self.centroids.iloc[i])
-            # TODO: Get the Euclidean distance of the data from each centroid
-            # then store it to a column in the DataFrame distances
-            # Hint: Use the get_euclidean_distance() function that we have
-            # defined in this class.
+            distances[i] = self.get_euclidean_distance(features, self.centroids.iloc[i])
+        groups = distances.idxmin(axis=1).astype('int32')
+        return groups
 
-        # TODO: get the index of the lowest distance for each data point and
-        # assign it to a Series named groups
-        # Hint: Use pandas.DataFrame.idxmin() function.
-
-        groups = distances.idxmin(axis=1)
-        return groups.astype('int32')
-
-
-    def adjust_centroids(self, data, groups):
-        """Returns the new values for each centroid. This function adjusts
-        the location of centroids based on the average of the values of the
-        data points in their corresponding clusters.
-
-        Arguments:
-            data {DataFrame} -- dataset to cluster
-            groups {Series} -- represents the cluster of each data point in the
-            dataset.
-        Returns:
-            DataFrame -- contains the values of the adjusted location of the
-            centroids.
+    # -----------------------
+    # Adjust centroids
+    # -----------------------
+    def adjust_centroids(self, data: pd.DataFrame, groups: pd.Series) -> pd.DataFrame:
         """
+        Compute new centroids as mean of assigned points.
+        If a cluster has zero points, keep previous centroid for that cluster.
+        Returns DataFrame of shape (k, n_features)
+        """
+        features = data.iloc[:, self.start_var:self.end_var].reset_index(drop=True).astype(float)
+        grouped = pd.concat([features, groups.reset_index(drop=True).rename('group')], axis=1)
+        centroids = grouped.groupby('group').mean()
 
-        # TODO: Complete this function.
-
-        grouped_data = pd.concat([data, groups.rename('group')], axis=1)
-        grouped_data = pd.concat([data.iloc[:, self.start_var:self.end_var].reset_index(drop=True),
-                                  groups.rename('group').reset_index(drop=True)], axis=1)
-
-        centroids = grouped_data.groupby('group').mean()
-
+        # ensure index 0..k-1 exist
         centroids = centroids.reindex(range(self.k))
 
+        # if any centroid row is NaN (empty cluster), replace with previous centroid
         if not self.centroids.empty:
-            prev = self.centroids.reset_index(drop=True)
-            fill_df = pd.DataFrame(prev.values, columns=prev.columns).reindex(range(self.k))
-            centroids = centroids.fillna(fill_df)
-
-        centroids = centroids[self.columns]
+            prev = self.centroids.reset_index(drop=True).astype(float)
+            # fill missing rows from prev (alignment by columns)
+            for col in self.columns:
+                if col not in centroids.columns:
+                    centroids[col] = np.nan
+            centroids = centroids[self.columns]
+            # fill NaNs row-wise from prev
+            centroids = centroids.fillna(prev)
+        else:
+            # if no previous centroids (shouldn't happen), fill missing with zeros
+            centroids = centroids[self.columns].fillna(0.0)
 
         centroids = centroids.reset_index(drop=True)
-
-
         return centroids
 
-    def train(self, data, iters):
-        """Returns a Series which represents the final clusters of each data
-        point in the dataset. This function stops clustering if one of the
-        following is met:
-        - The values of the centroids do not change.
-        - The clusters of each data point do not change.
-        - The maximum number of iterations is met.
-
-        Arguments:
-            data {DataFrame} -- dataset to cluster
-            iters {int} -- maximum number of iterations before the clustering
-            stops
-        Returns:
-            Series -- represents the final clusters of each data point in the
-            dataset.
+    # -----------------------
+    # Train
+    # -----------------------
+    def train(self, data: pd.DataFrame, iters: int = 100) -> pd.Series:
         """
-
-        # TODO: Complete this function.
-
-        cur_groups = pd.Series(-1, index=[i for i in range(self.num_observations)])
-        i = 0
-        flag_groups = False
-        flag_centroids = False
+        Run k-means clustering.
+        Stopping: stop when groups do not change OR centroids do not change OR max iterations reached.
+        Returns final groups (pd.Series).
+        """
         if self.centroids.empty:
-            self.centroids = self.initialize_centroids(data)
-        # While no stopping criterion has been met, do the following
-        while i < iters and not flag_groups and not flag_centroids:
+            self.initialize_centroids(data)
 
-            # TODO: Get the clusters of the data points in the dataset and
-            # store it in variable groups.
-            # Hint: Use the group_observation() function that we have defined
-            # in this class.
+        prev_groups = pd.Series([-1] * data.shape[0], dtype='int32')
+        for i in range(1, iters + 1):
             groups = self.group_observations(data)
-           
-            # TODO: Adjust the centroids based on the current clusters and
-            # store it in variable centroids.
-            # Hint: Use the adjust_centroids() function that we have defined
-            # in this class.
             centroids = self.adjust_centroids(data, groups)
-            
-            # TODO: Check if there are changes with the clustering of the
-            # data points.
-            flag_groups = groups.equals(cur_groups)
 
-            # TODO: Check if there are changes with the values of the centroids
-            flag_centroids = centroids.reset_index(drop=True).equals(self.centroids.reset_index(drop=True))
+            groups_unchanged = groups.equals(prev_groups)
+            centroids_unchanged = centroids.reset_index(drop=True).equals(self.centroids.reset_index(drop=True))
 
-            cur_groups = groups
             self.centroids = centroids
+            prev_groups = groups
 
-            i += 1
-            print('Iteration', i)
+            # Stop if *either* groups or centroids unchanged
+            if groups_unchanged or centroids_unchanged:
+                # print debug info
+                # print(f"Stopped at iteration {i}: groups_unchanged={groups_unchanged}, centroids_unchanged={centroids_unchanged}")
+                break
 
-        print('Done clustering!')
-        return cur_groups
+        return prev_groups
